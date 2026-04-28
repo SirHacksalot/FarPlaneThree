@@ -1,0 +1,44 @@
+plugins {
+    id 'dev.architectury.loom'
+}
+
+version = "$fp2Version"
+group = "net.daporkchop.fp2"
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    maven { url = 'https://maven.neoforged.net/releases' }
+    maven { url = 'https://maven.fabricmc.net/' }
+    maven {
+        name = "DaPorkchop_"
+        url = "https://maven.daporkchop.net/"
+    }
+    mavenCentral()
+}
+
+if (project.name == 'neoforge') {
+    loom {
+        neoForge {
+            // enables NeoForge platform mode
+        }
+    }
+}
+
+stonecutter.const 'neoforge', project.name == 'neoforge'
+stonecutter.const 'fabric', project.name == 'fabric'
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraftVersion}"
+    mappings loom.officialMojangMappings()
+
+    if (project.name == 'neoforge') {
+        neoForge "net.neoforged:neoforge:${neoforgeVersion}"
+    } else if (project.name == 'fabric') {
+        modImplementation "net.fabricmc:fabric-loader:${fabricLoaderVersion}"
+    }
+}

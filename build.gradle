@@ -31,6 +31,8 @@ allprojects {
 }
 
 subprojects {
+    if (project.path == ':mc:1.21.1' || project.path.startsWith(':mc:1.21.1:')) return
+
     apply plugin: "java"
     apply plugin: "java-library"
     apply plugin: "fp2"
@@ -46,15 +48,15 @@ subprojects {
         idea.module.inheritOutputDirs = true
     }
 
-    /*java.toolchain {
-        languageVersion = JavaLanguageVersion.of(8)
-        vendor = JvmVendorSpec.ADOPTOPENJDK
-    }*/
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(Integer.parseInt("$javaVersionSimple"))
+        }
+    }
 
     tasks.withType(JavaCompile) {
         options.encoding = "UTF-8"
         options.headerOutputDirectory.convention(null) // https://github.com/gradle/gradle/issues/12904
-        sourceCompatibility = targetCompatibility = "$javaVersionFull"
     }
 
     repositories {
@@ -134,7 +136,7 @@ subprojects {
         shade_
         provided_
 
-        provided_.extendsFrom runtime
+        provided_.extendsFrom configurations.runtimeOnly
     }
 
     configurations.all {

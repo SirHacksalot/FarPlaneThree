@@ -18,6 +18,24 @@
  *
  */
 
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        maven { url = "https://maven.kikugie.dev/releases" }
+        maven { url = "https://maven.architectury.dev/" }
+        maven { url = "https://maven.fabricmc.net/" }
+        maven { url = "https://maven.neoforged.net/releases" }
+        maven { url = "https://maven.minecraftforge.net/" }
+    }
+    plugins {
+        id 'dev.architectury.loom' version '1.14.473'
+    }
+}
+
+plugins {
+    id 'dev.kikugie.stonecutter' version '0.7.11'
+}
+
 rootProject.name = 'FarPlaneTwo'
 
 include 'api'
@@ -32,5 +50,13 @@ include 'gl'
 include 'gl:codegen'
 include 'gl:opengl-lwjgl2'
 include 'gl:opengl-lwjgl3'
-include 'mc:1.12.2-forge'
-include 'mc:1.16-forge'
+include 'mc:1.21.1'
+//include 'mc:1.12.2-forge'
+//include 'mc:1.16-forge'
+
+stonecutter {
+    create(':mc:1.21.1') {
+        versions 'neoforge', 'fabric'
+        vcsVersion = 'neoforge'
+    }
+}
