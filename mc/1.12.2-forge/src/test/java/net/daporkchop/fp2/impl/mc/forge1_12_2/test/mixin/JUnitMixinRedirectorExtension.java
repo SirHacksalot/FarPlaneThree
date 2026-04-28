@@ -24,7 +24,9 @@ import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.InvocationInterceptor;
 import org.junit.jupiter.api.extension.ReflectiveInvocationContext;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import org.opentest4j.TestAbortedException;
 
 /**
  * @author DaPorkchop_
@@ -36,7 +38,15 @@ public class JUnitMixinRedirectorExtension implements InvocationInterceptor {
 
         Class<?> clazz = Class.forName(invocationContext.getTargetClass().getTypeName(), true, JUnitMixinRedirectorClassloader.INSTANCE);
         Method method = clazz.getDeclaredMethod(invocationContext.getExecutable().getName(), invocationContext.getExecutable().getParameterTypes());
-        method.invoke(null, invocationContext.getArguments().toArray());
+        try {
+            method.invoke(null, invocationContext.getArguments().toArray());
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            if ("org.opentest4j.TestAbortedException".equals(cause.getClass().getName())) {
+                throw new TestAbortedException(cause.getMessage());
+            }
+            throw cause;
+        }
     }
 
     @Override
@@ -50,7 +60,11 @@ public class JUnitMixinRedirectorExtension implements InvocationInterceptor {
 
         Class<?> clazz = Class.forName(invocationContext.getTargetClass().getTypeName(), true, JUnitMixinRedirectorClassloader.INSTANCE);
         Method method = clazz.getDeclaredMethod(invocationContext.getExecutable().getName(), invocationContext.getExecutable().getParameterTypes());
-        method.invoke(clazz.newInstance(), invocationContext.getArguments().toArray());
+        try {
+            method.invoke(clazz.newInstance(), invocationContext.getArguments().toArray());
+        } catch (InvocationTargetException e) {
+            throw e.getCause();
+        }
     }
 
     @Override

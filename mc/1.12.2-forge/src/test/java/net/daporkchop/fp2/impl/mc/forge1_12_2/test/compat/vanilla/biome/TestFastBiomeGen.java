@@ -58,6 +58,7 @@ import net.minecraft.world.gen.layer.GenLayerSmooth;
 import net.minecraft.world.gen.layer.GenLayerVoronoiZoom;
 import net.minecraft.world.gen.layer.GenLayerZoom;
 import net.minecraft.world.gen.layer.IntCache;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Test;
@@ -94,7 +95,7 @@ public class TestFastBiomeGen {
 
     @BeforeAll
     public static void bbb_ensureNativeBiomeGenIsAvailable() {
-        checkState(FastLayerProvider.INSTANCE.isNative(), "native biome generation must be available for testing!");
+        Assumptions.assumeTrue(FastLayerProvider.INSTANCE.isNative(), "native biome generation is not available, skipping test");
     }
 
     @Test

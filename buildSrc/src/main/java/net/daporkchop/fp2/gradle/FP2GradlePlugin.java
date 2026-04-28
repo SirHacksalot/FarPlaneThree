@@ -47,10 +47,17 @@ public class FP2GradlePlugin implements Plugin<Project> {
     }
 
     public static Optional<Path> findInPath(@NonNull String name) {
+        boolean isWindows = System.getProperty("os.name").startsWith("Windows");
         for (String dir : System.getenv("PATH").split(Pattern.quote(File.pathSeparator))) {
             Path path = Paths.get(dir).resolve(name);
             if (Files.exists(path)) {
                 return Optional.of(path);
+            }
+            if (isWindows) {
+                Path exePath = Paths.get(dir).resolve(name + ".exe");
+                if (Files.exists(exePath)) {
+                    return Optional.of(exePath);
+                }
             }
         }
         return Optional.empty();

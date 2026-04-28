@@ -61,6 +61,8 @@ public final class Natives {
 
     public static final boolean CAN_COMPILE = CLANG_PATH.isPresent() && TAR_PATH.isPresent();
 
+    public static final String NULL_DEVICE = Files.exists(Paths.get("/dev/null")) ? "/dev/null" : "NUL";
+
     @SneakyThrows({ InterruptedException.class, IOException.class })
     public static void launchProcessAndWait(List<String> command) {
         Process process = new ProcessBuilder().redirectErrorStream(true).command(command).start();
@@ -170,11 +172,6 @@ public final class Natives {
     }
 
     private CompletableFuture<Boolean> checkSupported(NativeSpec spec) {
-        if (!Files.exists(Paths.get("/dev/null"))) {
-            //TODO: we don't know how to handle this...
-            return CompletableFuture.completedFuture(false);
-        }
-
         List<String> command = new ArrayList<>();
         command.add(CLANG_PATH.get().toString());
         command.add("-target");
@@ -186,13 +183,13 @@ public final class Natives {
         //TODO: this is gross
         command.add(this.project.getRootProject().getProjectDir().toPath().toAbsolutePath().resolve("buildSrc/src/main/resources/net/daporkchop/fp2/gradle/natives/compile-test.cpp").toString());
         command.add("-o");
-        command.add("/dev/null");
+        command.add(NULL_DEVICE);
 
         //TODO: should we also try linking?
 
         Process process;
         try {
-            process = new ProcessBuilder(command).redirectOutput(new File("/dev/null")).redirectError(new File("/dev/null")).start();
+            process = new ProcessBuilder(command).redirectOutput(new File(NULL_DEVICE)).redirectError(new File(NULL_DEVICE)).start();
         } catch (IOException e) {
             return CompletableFuture.completedFuture(false);
         }

@@ -98,7 +98,8 @@ namespace FP2_ROOT_NAMESPACE { namespace fp2 {
     };
 
     using pinned_byte_array = pinned_array<jbyteArray, jbyte>;
-    using pinned_int_array = pinned_array<jintArray, jint>;
+    // jint is 'long' on Windows but 'int' on Linux; use int32_t for a type consistent with the rest of the codebase
+    using pinned_int_array = pinned_array<jintArray, int32_t>;
     using pinned_float_array = pinned_array<jfloatArray, jfloat>;
     using pinned_double_array = pinned_array<jdoubleArray, jdouble>;
 

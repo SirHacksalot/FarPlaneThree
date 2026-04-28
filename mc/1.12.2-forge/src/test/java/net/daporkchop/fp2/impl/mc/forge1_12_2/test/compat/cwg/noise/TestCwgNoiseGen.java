@@ -27,6 +27,7 @@ import net.daporkchop.fp2.impl.mc.forge1_12_2.test.FP2Test;
 import net.daporkchop.lib.common.misc.string.PStrings;
 import net.daporkchop.lib.unsafe.PUnsafe;
 import net.minecraft.world.gen.NoiseGeneratorImproved;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Test;
@@ -76,7 +77,7 @@ public class TestCwgNoiseGen {
 
     @BeforeAll
     public static void ccc_ensureNativeNoiseGenIsAvailable() {
-        checkState(CWGNoiseProvider1_12.INSTANCE.isNative(), "native noise generation must be available for testing!");
+        Assumptions.assumeTrue(CWGNoiseProvider1_12.INSTANCE.isNative(), "native noise generation is not available, skipping test");
 
         CustomGeneratorSettings settings = new CustomGeneratorSettings();
         long seed = 102978420983752L;

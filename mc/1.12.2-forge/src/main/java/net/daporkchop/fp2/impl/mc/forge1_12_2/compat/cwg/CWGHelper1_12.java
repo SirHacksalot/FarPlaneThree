@@ -28,6 +28,8 @@ import net.daporkchop.lib.common.util.PorkUtil;
 import net.daporkchop.lib.unsafe.PUnsafe;
 import net.minecraft.world.biome.Biome;
 import net.minecraft.world.biome.BiomeProvider;
+import net.minecraftforge.fml.common.Loader;
+import net.minecraftforge.fml.common.ModContainer;
 import net.minecraftforge.fml.common.versioning.DefaultArtifactVersion;
 
 import java.util.List;
@@ -38,7 +40,23 @@ import java.util.Map;
  */
 @UtilityClass
 public class CWGHelper1_12 {
-    public static final boolean CWG_V6 = new DefaultArtifactVersion(CustomCubicMod.class.getPackage().getImplementationVersion()).compareTo(new DefaultArtifactVersion("1.12.2-0.0.169.0-SNAPSHOT")) <= 0;
+    public static final boolean CWG_V6 = isCwgV6();
+
+    private static boolean isCwgV6() {
+        String version = CustomCubicMod.class.getPackage().getImplementationVersion();
+        if (version == null) {
+            // SNAPSHOT jars often omit Implementation-Version; fall back to Forge's mod registry
+            version = Loader.instance().getModList().stream()
+                    .filter(mc -> "cubicgen".equals(mc.getModId()))
+                    .findFirst()
+                    .map(ModContainer::getVersion)
+                    .orElse(null);
+        }
+        if (version == null) {
+            return false;
+        }
+        return new DefaultArtifactVersion(version).compareTo(new DefaultArtifactVersion("1.12.2-0.0.169.0-SNAPSHOT")) <= 0;
+    }
 
     private static final long BIOMEBLOCKREPLACERS_OFFSET = PUnsafe.pork_getOffset(BiomeSource.class, "biomeBlockReplacers");
     private static final long BIOMEGEN_OFFSET = PUnsafe.pork_getOffset(BiomeSource.class, "biomeGen");
