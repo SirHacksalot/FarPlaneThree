@@ -32,6 +32,15 @@ if (project.name == 'neoforge') {
 stonecutter.const 'neoforge', project.name == 'neoforge'
 stonecutter.const 'fabric', project.name == 'fabric'
 
+// FP2 modules + their transitive deps via a detached configuration.
+// Wrapped in files() to produce FileCollectionDependency instead of ProjectDependency,
+// sidestepping Loom's getLoomProjectDependencies() which calls getPath() removed in Gradle 8.8.
+def fp2CompileDeps = configurations.detachedConfiguration(
+    dependencies.create(project(':api')),
+    dependencies.create(project(':core')),
+    dependencies.create(project(':core:log4j'))
+)
+
 dependencies {
     minecraft "com.mojang:minecraft:${minecraftVersion}"
     mappings loom.officialMojangMappings()
@@ -41,4 +50,8 @@ dependencies {
     } else if (project.name == 'fabric') {
         modImplementation "net.fabricmc:fabric-loader:${fabricLoaderVersion}"
     }
+
+    compileOnly files(fp2CompileDeps)
+    compileOnly "org.projectlombok:lombok:${lombokVersion}"
+    annotationProcessor "org.projectlombok:lombok:${lombokVersion}"
 }
