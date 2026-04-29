@@ -1,12 +1,14 @@
 package net.daporkchop.fp2.mc;
 
 //? if neoforge {
+import net.daporkchop.fp2.mc.network.FP2Network1_21;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.fml.loading.FMLPaths;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 //?} else {
 /*import net.fabricmc.api.EnvType;
 import net.fabricmc.api.ModInitializer;
@@ -31,6 +33,11 @@ public class FP2Mod extends FP2Core {
     public FP2Mod(IEventBus modEventBus) {
         this.log(new Log4jAsPorkLibLogger(LogManager.getLogger(FP2.MODID)));
         modEventBus.addListener(this::onCommonSetup);
+        modEventBus.addListener(this::onRegisterPayloadHandlers);
+    }
+
+    private void onRegisterPayloadHandlers(RegisterPayloadHandlersEvent event) {
+        FP2Network1_21.init(this, event);
     }
 
     private void onCommonSetup(FMLCommonSetupEvent event) {
