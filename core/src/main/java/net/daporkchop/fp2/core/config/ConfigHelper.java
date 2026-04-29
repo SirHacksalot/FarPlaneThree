@@ -23,7 +23,6 @@ import com.google.common.collect.ImmutableSet;
 import lombok.NonNull;
 import lombok.SneakyThrows;
 import lombok.experimental.UtilityClass;
-import net.daporkchop.lib.common.function.exception.ESupplier;
 import net.daporkchop.lib.common.misc.Tuple;
 import net.daporkchop.lib.unsafe.PUnsafe;
 
@@ -47,8 +46,6 @@ import static net.daporkchop.lib.common.util.PorkUtil.*;
  */
 @UtilityClass
 public class ConfigHelper {
-    protected static final long FIELD_MODIFIERS_OFFSET = ((ESupplier<Long>) () -> PUnsafe.objectFieldOffset(Field.class.getDeclaredField("modifiers"))).get();
-
     protected static final Set<Class<?>> SIMPLE_COPYABLE_TYPES = ImmutableSet.of(
             Boolean.class,
             Byte.class, Short.class, Character.class, Integer.class, Long.class,
@@ -125,9 +122,7 @@ public class ConfigHelper {
                 .peek(field -> {
                     checkValidPropertyType(field);
 
-                    //make the field accessible and writeable
                     field.setAccessible(true);
-                    PUnsafe.putInt(field, FIELD_MODIFIERS_OFFSET, field.getModifiers() & ~Modifier.FINAL);
                 });
     }
 
@@ -160,7 +155,7 @@ public class ConfigHelper {
             T dstInstance = uncheckedCast(PUnsafe.allocateInstance(srcInstance.getClass()));
             for (Field field : getConfigPropertyFields(srcInstance.getClass()).toArray(Field[]::new)) {
                 Object value = field.get(srcInstance);
-                field.set(dstInstance, isSimpleCopyableType(field.getType()) ? value : cloneConfigObject(value));
+                putField(dstInstance, field, isSimpleCopyableType(field.getType()) ? value : cloneConfigObject(value));
             }
             return dstInstance;
         }
@@ -227,6 +222,20 @@ public class ConfigHelper {
         }
 
         return instance;
+    }
+
+    protected static void putField(@NonNull Object obj, @NonNull Field field, Object value) {
+        long offset = PUnsafe.objectFieldOffset(field);
+        Class<?> type = field.getType();
+        if (type == boolean.class) PUnsafe.putBoolean(obj, offset, (Boolean) value);
+        else if (type == byte.class) PUnsafe.putByte(obj, offset, (Byte) value);
+        else if (type == short.class) PUnsafe.putShort(obj, offset, (Short) value);
+        else if (type == char.class) PUnsafe.putChar(obj, offset, (Character) value);
+        else if (type == int.class) PUnsafe.putInt(obj, offset, (Integer) value);
+        else if (type == long.class) PUnsafe.putLong(obj, offset, (Long) value);
+        else if (type == float.class) PUnsafe.putFloat(obj, offset, (Float) value);
+        else if (type == double.class) PUnsafe.putDouble(obj, offset, (Double) value);
+        else PUnsafe.putObject(obj, offset, value);
     }
 
     protected void checkValidPropertyType(@NonNull Field field) {

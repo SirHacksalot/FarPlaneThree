@@ -1,3 +1,15 @@
+buildscript {
+    repositories { mavenCentral() }
+    dependencies { classpath 'org.ow2.asm:asm:9.7' }
+}
+
+import org.objectweb.asm.ClassReader
+import org.objectweb.asm.ClassVisitor
+import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.Label
+import org.objectweb.asm.MethodVisitor
+import org.objectweb.asm.Opcodes
+
 plugins {
     id 'dev.architectury.loom'
 }
@@ -21,14 +33,6 @@ repositories {
     mavenCentral()
 }
 
-if (project.name == 'neoforge') {
-    loom {
-        neoForge {
-            // enables NeoForge platform mode
-        }
-    }
-}
-
 stonecutter.const 'neoforge', project.name == 'neoforge'
 stonecutter.const 'fabric', project.name == 'fabric'
 
@@ -41,6 +45,105 @@ def fp2CompileDeps = configurations.detachedConfiguration(
     dependencies.create(project(':core:log4j'))
 )
 
+// Patches PUnsafe's lambda$static$1 (the jdk.internal.misc.Unsafe fetcher) to return null,
+// causing PUnsafe to fall back to sun.misc.Unsafe. Mixin cannot fix this because
+// MC-BOOTSTRAP's ModuleClassLoader bypasses the Mixin TRANSFORMATIONSERVICE pipeline entirely.
+def patchUnsafeJar(File input, File output) {
+    println "FP2: patching ${input.name} -> ${output}"
+    output.parentFile.mkdirs()
+    def zin = new java.util.jar.JarFile(input)
+    def zout = new java.util.jar.JarOutputStream(new java.io.FileOutputStream(output))
+    try {
+        zin.entries().each { entry ->
+            def bytes = zin.getInputStream(entry).readAllBytes()
+            if (entry.name == 'net/daporkchop/lib/unsafe/PUnsafe.class') {
+                def cr = new ClassReader(bytes)
+                def cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES)
+                cr.accept(new ClassVisitor(Opcodes.ASM9, cw) {
+                    @Override
+                    MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                        def mv = super.visitMethod(access, name, descriptor, signature, exceptions)
+                        // lambda$static$1: the PrivilegedAction that fetches jdk.internal.misc.Unsafe.
+                        // Return null so jdk_internal_misc_Unsafe is set to null instead of throwing.
+                        if (name == 'lambda$static$1' && descriptor == '()Ljava/lang/Object;') {
+                            mv.visitCode()
+                            mv.visitInsn(Opcodes.ACONST_NULL)
+                            mv.visitInsn(Opcodes.ARETURN)
+                            mv.visitMaxs(1, 0)
+                            mv.visitEnd()
+                            return new MethodVisitor(Opcodes.ASM9) {}
+                        }
+                        // getNewUnsafeMethod: binds a method on jdk_internal_misc_Unsafe.
+                        // Guard against null so the <clinit> try-catch takes the fallback branch
+                        // (allocateUninitializedArray = null) instead of wrapping the NPE in AssertionError.
+                        if (name == 'getNewUnsafeMethod' && descriptor == '(Ljava/lang/String;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/MethodHandle;') {
+                            def labelNotNull = new Label()
+                            mv.visitCode()
+                            mv.visitFieldInsn(Opcodes.GETSTATIC, 'net/daporkchop/lib/unsafe/PUnsafe', 'jdk_internal_misc_Unsafe', 'Ljava/lang/Object;')
+                            mv.visitJumpInsn(Opcodes.IFNONNULL, labelNotNull)
+                            mv.visitInsn(Opcodes.ACONST_NULL)
+                            mv.visitInsn(Opcodes.ARETURN)
+                            mv.visitLabel(labelNotNull)
+                            mv.visitMethodInsn(Opcodes.INVOKESTATIC, 'java/lang/invoke/MethodHandles', 'lookup', '()Ljava/lang/invoke/MethodHandles$Lookup;', false)
+                            mv.visitFieldInsn(Opcodes.GETSTATIC, 'net/daporkchop/lib/unsafe/PUnsafe', 'jdk_internal_misc_Unsafe', 'Ljava/lang/Object;')
+                            mv.visitVarInsn(Opcodes.ALOAD, 0)
+                            mv.visitVarInsn(Opcodes.ALOAD, 1)
+                            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, 'java/lang/invoke/MethodHandles$Lookup', 'bind', '(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/MethodHandle;', false)
+                            mv.visitInsn(Opcodes.ARETURN)
+                            mv.visitMaxs(4, 2)
+                            mv.visitEnd()
+                            return new MethodVisitor(Opcodes.ASM9) {}
+                        }
+                        return mv
+                    }
+                }, 0)
+                bytes = cw.toByteArray()
+            }
+            zout.putNextEntry(new java.util.jar.JarEntry(entry.name))
+            zout.write(bytes)
+            zout.closeEntry()
+        }
+    } finally {
+        zout.close()
+        zin.close()
+    }
+}
+
+if (project.name == 'neoforge') {
+    loom {
+        neoForge {}
+    }
+
+    afterEvaluate {
+        ['runClient', 'runServer', 'runData', 'runGameTestServer'].each { taskName ->
+            def t = tasks.findByName(taskName)
+            if (t) {
+                t.doFirst {
+                    // NeoForge reads forge_minecraft_classpath.txt as legacyClassPath.file.
+                    // Loom does not include implementation/runtimeClasspath deps there, so append manually.
+                    // unsafe-*.jar is patched first so lambda$static$1 returns null instead of throwing,
+                    // letting PUnsafe fall back to sun.misc.Unsafe without needing --add-opens.
+                    def cpFile = project.file('.gradle/loom-cache/forge_minecraft_classpath.txt')
+                    if (cpFile.exists()) {
+                        def existing = new LinkedHashSet(cpFile.readLines().findAll { it.trim() })
+                        def patchedLibsDir = new File(buildDir, 'patched-libs')
+                        fp2CompileDeps.resolve().each { jar ->
+                            if (jar.name.startsWith('unsafe-') && jar.name.endsWith('.jar')) {
+                                def patched = new File(patchedLibsDir, jar.name)
+                                patchUnsafeJar(jar, patched)
+                                existing.add(patched.absolutePath)
+                            } else {
+                                existing.add(jar.absolutePath)
+                            }
+                        }
+                        cpFile.text = existing.join('\n')
+                    }
+                }
+            }
+        }
+    }
+}
+
 dependencies {
     minecraft "com.mojang:minecraft:${minecraftVersion}"
     mappings loom.officialMojangMappings()
@@ -51,7 +154,7 @@ dependencies {
         modImplementation "net.fabricmc:fabric-loader:${fabricLoaderVersion}"
     }
 
-    compileOnly files(fp2CompileDeps)
+    implementation files(fp2CompileDeps)
     compileOnly "org.projectlombok:lombok:${lombokVersion}"
     annotationProcessor "org.projectlombok:lombok:${lombokVersion}"
 }

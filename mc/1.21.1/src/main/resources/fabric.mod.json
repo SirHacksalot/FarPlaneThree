@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "fp2",
+  "version": "${version}",
+  "name": "FarPlaneTwo",
+  "description": "The successor to Foghrye4's CWGFarPlaneView",
+  "authors": ["DaPorkchop_"],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["net.daporkchop.fp2.mc.FP2Mod"]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.9",
+    "minecraft": "~1.21.1"
+  }
+}

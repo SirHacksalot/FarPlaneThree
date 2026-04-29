@@ -34,6 +34,7 @@ public class FP2Mod extends FP2Core {
     }
 
     private void onCommonSetup(FMLCommonSetupEvent event) {
+        LogManager.getLogger(FP2.MODID).info("fp2.flagcheck={}", System.getProperty("fp2.flagcheck", "<null>"));
         this.init();
         if (FMLEnvironment.dist == Dist.CLIENT) {
             this.client(new FP2Client1_21(this));
