@@ -12,11 +12,15 @@ import net.daporkchop.fp2.core.server.world.level.IFarLevelServer;
 import net.daporkchop.fp2.mc.network.FP2Network1_21;
 import net.daporkchop.lib.math.vector.Vec3d;
 import net.minecraft.server.level.ServerPlayer;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.function.Consumer;
 
 @Getter
 public class FarPlayerServer1_21 implements IFarPlayerServer {
+    private static final Logger LOGGER = LogManager.getLogger(FarPlayerServer1_21.class);
+
     private final FP2Core fp2;
     private final ServerPlayer player;
 
@@ -32,7 +36,7 @@ public class FarPlayerServer1_21 implements IFarPlayerServer {
 
     @Override
     public void fp2_IFarPlayerServer_handle(@NonNull Object packet) {
-        // TODO: dispatch incoming serverbound packets to game logic
+        LOGGER.info("FP2: server received packet: {}", packet.getClass().getSimpleName());
     }
 
     @Override

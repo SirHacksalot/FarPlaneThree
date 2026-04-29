@@ -14,6 +14,13 @@ import net.daporkchop.fp2.core.client.render.RenderManager;
 import net.daporkchop.fp2.core.log4j.util.log.Log4jAsPorkLibLogger;
 import org.apache.logging.log4j.LogManager;
 
+//? if neoforge {
+import net.daporkchop.fp2.mc.client.player.FarPlayerClient1_21;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
+import net.neoforged.neoforge.common.NeoForge;
+//?}
+
 import java.util.Optional;
 import java.util.function.Function;
 
@@ -23,9 +30,42 @@ import static net.daporkchop.fp2.api.FP2.*;
 public class FP2Client1_21 extends FP2Client {
     private final FP2Core fp2;
 
+    //? if neoforge {
+    private volatile FarPlayerClient1_21 currentPlayerInstance;
+    //?}
+
     public FP2Client1_21(@NonNull FP2Core fp2) {
         this.fp2 = fp2;
         this.chat(new Log4jAsPorkLibLogger(LogManager.getLogger(MODID + ".chat")));
+        //? if neoforge {
+        NeoForge.EVENT_BUS.register(this);
+        //?}
+    }
+
+    //? if neoforge {
+    @SubscribeEvent
+    public void onPlayerLogIn(ClientPlayerNetworkEvent.LoggingIn event) {
+        FarPlayerClient1_21 player = new FarPlayerClient1_21(this.fp2);
+        this.currentPlayerInstance = player;
+    }
+
+    @SubscribeEvent
+    public void onPlayerLogOut(ClientPlayerNetworkEvent.LoggingOut event) {
+        FarPlayerClient1_21 player = this.currentPlayerInstance;
+        this.currentPlayerInstance = null;
+        if (player != null) {
+            player.close();
+        }
+    }
+    //?}
+
+    @Override
+    public Optional<? extends IFarPlayerClient> currentPlayer() {
+        //? if neoforge {
+        return Optional.ofNullable(this.currentPlayerInstance);
+        //?} else {
+        /*return Optional.empty();*/
+        //?}
     }
 
     @Override
@@ -46,11 +86,6 @@ public class FP2Client1_21 extends FP2Client {
     @Override
     public KeyCategory createKeyCategory(@NonNull String localeKey) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Optional<? extends IFarPlayerClient> currentPlayer() {
-        return Optional.empty();
     }
 
     @Override

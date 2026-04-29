@@ -5,6 +5,7 @@ import lombok.NonNull;
 import net.daporkchop.fp2.core.FP2Core;
 import net.daporkchop.fp2.core.network.IPacket;
 import net.daporkchop.fp2.core.network.RegisterPacketsEvent;
+import net.daporkchop.fp2.mc.client.FP2Client1_21;
 import net.daporkchop.fp2.mc.server.FP2Server1_21;
 import net.daporkchop.lib.binary.stream.DataIn;
 import net.daporkchop.lib.binary.stream.DataOut;
@@ -120,8 +121,9 @@ public final class FP2Network1_21 {
         registrar.playToClient(FP2ClientboundPayload.TYPE, clientboundCodec,
                 (payload, context) -> {
                     IPacket packet = payload.packet();
-                    LOGGER.info("FP2: client received packet: {}", packet.getClass().getSimpleName());
-                    // TODO: dispatch to IFarPlayerClient once client is implemented
+                    LOGGER.debug("FP2: client received packet: {}", packet.getClass().getSimpleName());
+                    FP2Client1_21 client = (FP2Client1_21) fp2.client();
+                    client.currentPlayer().ifPresent(player -> player.handle(packet));
                 });
 
         registrar.playToServer(FP2ServerboundPayload.TYPE, serverboundCodec,

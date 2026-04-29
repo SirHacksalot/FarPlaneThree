@@ -2,6 +2,7 @@ package net.daporkchop.fp2.mc.server;
 
 import lombok.Getter;
 import lombok.NonNull;
+import net.daporkchop.fp2.api.util.Identifier;
 import net.daporkchop.fp2.core.FP2Core;
 import net.daporkchop.fp2.core.network.packet.standard.server.SPacketHandshake;
 import net.daporkchop.fp2.core.server.FP2Server;
@@ -9,11 +10,21 @@ import net.daporkchop.fp2.core.server.player.IFarPlayerServer;
 import net.daporkchop.fp2.core.util.threading.futureexecutor.FutureExecutor;
 
 //? if neoforge {
+import net.daporkchop.fp2.mc.compat.vanilla.FP2Vanilla1_21;
 import net.daporkchop.fp2.mc.server.player.FarPlayerServer1_21;
+import net.daporkchop.fp2.mc.server.world.FWorldServer1_21;
+import net.daporkchop.fp2.mc.server.world.level.FLevelServer1_21;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.level.LevelEvent;
+import net.neoforged.neoforge.event.server.ServerAboutToStartEvent;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 //?}
 
 import java.util.Map;
@@ -25,6 +36,10 @@ public class FP2Server1_21 extends FP2Server {
     private final FP2Core fp2;
     private final Map<UUID, IFarPlayerServer> players = new ConcurrentHashMap<>();
 
+    //? if neoforge {
+    private volatile FWorldServer1_21 world;
+    //?}
+
     public FP2Server1_21(@NonNull FP2Core fp2) {
         this.fp2 = fp2;
     }
@@ -34,6 +49,7 @@ public class FP2Server1_21 extends FP2Server {
         super.init(serverThreadExecutor);
         //? if neoforge {
         NeoForge.EVENT_BUS.register(this);
+        this.fp2.eventBus().register(new FP2Vanilla1_21());
         //?}
     }
 
@@ -45,6 +61,75 @@ public class FP2Server1_21 extends FP2Server {
     }
 
     //? if neoforge {
+    @SubscribeEvent
+    public void onServerAboutToStart(ServerAboutToStartEvent event) {
+        MinecraftServer server = event.getServer();
+        this.world = new FWorldServer1_21(this.fp2, server);
+    }
+
+    @SubscribeEvent
+    public void onServerStopped(ServerStoppedEvent event) {
+        FWorldServer1_21 w = this.world;
+        this.world = null;
+        if (w != null) {
+            try {
+                w.close();
+            } catch (Exception e) {
+                this.fp2.log().error("Error closing FWorldServer1_21", e);
+            }
+        }
+    }
+
+    @SubscribeEvent
+    public void onLevelLoad(LevelEvent.Load event) {
+        if (!(event.getLevel() instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        FWorldServer1_21 w = this.world;
+        if (w == null) return;
+        Identifier id = Identifier.from(serverLevel.dimension().location().getNamespace(),
+                serverLevel.dimension().location().getPath());
+        w.loadLevel(id, serverLevel);
+    }
+
+    @SubscribeEvent
+    public void onLevelUnload(LevelEvent.Unload event) {
+        if (!(event.getLevel() instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        FWorldServer1_21 w = this.world;
+        if (w == null) return;
+        Identifier id = Identifier.from(serverLevel.dimension().location().getNamespace(),
+                serverLevel.dimension().location().getPath());
+        w.unloadLevel(id);
+    }
+
+    @SubscribeEvent
+    public void onEntityJoinLevel(EntityJoinLevelEvent event) {
+        if (!(event.getLevel() instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        if (!(event.getEntity() instanceof ServerPlayer serverPlayer)) {
+            return;
+        }
+        IFarPlayerServer fp2Player = this.players.get(serverPlayer.getUUID());
+        if (fp2Player == null) return;
+        FWorldServer1_21 w = this.world;
+        if (w == null) return;
+        FLevelServer1_21 level = w.getLevel(serverLevel.dimension());
+        if (level != null) {
+            fp2Player.fp2_IFarPlayer_joinedWorld(level);
+        }
+    }
+
+    @SubscribeEvent
+    public void onServerTick(ServerTickEvent.Post event) {
+        FWorldServer1_21 w = this.world;
+        if (w != null) {
+            w.serverExecutor().tick();
+        }
+    }
+
     @SubscribeEvent
     public void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer serverPlayer)) {
