@@ -65,6 +65,7 @@ import static net.daporkchop.lib.common.util.PValidation.*;
  */
 @Getter
 public final class TrackerManager implements FTileStorage.Listener, AutoCloseable {
+
     /*
      * Implementation notes:
      *

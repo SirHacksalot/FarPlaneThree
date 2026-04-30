@@ -212,11 +212,12 @@ if (project.name == 'neoforge') {
                 vmArg '--add-opens=java.base/java.lang=net.daporkchop.lib.natives'
                 // Enable FP2's debug.* config options at runtime (debugColors, vanillaTerrainRendering, etc.).
                 // Without this flag, FP2_DEBUG is false and AbstractFarRenderer forces debugColors to DISABLED.
-                property 'fp2.debug', 'true'
+                // (Architectury Loom's `property 'k','v'` DSL doesn't reach the JVM here; use vmArg instead.)
+                vmArg '-Dfp2.debug=true'
             }
             server {
                 vmArg '--add-opens=java.base/java.lang=net.daporkchop.lib.natives'
-                property 'fp2.debug', 'true'
+                vmArg '-Dfp2.debug=true'
             }
         }
     }

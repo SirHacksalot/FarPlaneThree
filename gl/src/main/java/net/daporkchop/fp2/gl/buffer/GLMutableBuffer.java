@@ -211,9 +211,13 @@ public final class GLMutableBuffer extends GLBuffer {
         //  yet to see anyone complaining about FP2 using up all their memory, so I don't think this is a particularly
         //  pressing issue.
 
-        //check for OpenGL errors here, as we're going to be relying on them to detect if we run out of memory
-        //  and we don't want any errors which occurred previously to affect the result
-        this.gl.checkError();
+        //drain any prior accumulated GL errors (e.g. from vanilla MC's render path or another
+        //  mod) so they don't get attributed to FP2's resize, and so the OUT_OF_MEMORY detection
+        //  below is reliable. checkError() throws on the first non-zero error rather than draining,
+        //  which crashes us when running alongside drivers that report harmless prior errors.
+        while (this.gl.glGetError() != net.daporkchop.fp2.gl.OpenGLConstants.GL_NO_ERROR) {
+            // discard
+        }
 
         //If non-null, we're taking the second approach and this is a pointer to the CPU-side buffer containing the
         //  retained data.

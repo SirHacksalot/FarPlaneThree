@@ -24,6 +24,8 @@ import net.daporkchop.fp2.core.client.render.state.DrawState;
 import net.daporkchop.fp2.core.engine.api.ctx.IFarClientContext;
 import net.daporkchop.fp2.core.engine.client.AbstractFarRenderer;
 import net.daporkchop.fp2.mc.client.player.FarPlayerClient1_21;
+import net.daporkchop.fp2.mc.client.render.Frustum1_21;
+import net.daporkchop.fp2.mc.client.render.LightmapAccess1_21;
 import net.daporkchop.fp2.mc.client.world.FWorldClient1_21;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -31,6 +33,8 @@ import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL13;
 //?}
 
 import java.util.Optional;
@@ -117,6 +121,10 @@ public class FP2Client1_21 extends FP2Client {
         Vec3 pos = event.getCamera().getPosition();
         this.fp2_cameraState.positionDouble(pos.x, pos.y, pos.z);
 
+        // prepare() flushes baked tile data into the renderIndex and selects which tiles to draw.
+        // Must be called before render() each frame, otherwise drawableMask is permanently empty.
+        renderer.prepare(this.fp2_cameraState, new Frustum1_21(event.getFrustum()));
+
         DrawState drawState = new DrawState();
         drawState.fogMode = DrawState.FogMode.DISABLED;
         drawState.fogStart = 0.0f;
@@ -128,7 +136,25 @@ public class FP2Client1_21 extends FP2Client {
         drawState.fogColorA = 1.0f;
         drawState.alphaRefCutout = 0.1f;
 
-        renderer.render(this.fp2_cameraState, drawState);
+        // Bind Minecraft's lightmap to TU1 so block.frag's `texture(LIGHTMAP_SAMPLER, ...)` reads
+        // real values instead of zeros (which would multiply fragment color to black). The renderer
+        // expects this — see FP2Client.lightmapTextureUnit() == 1. Vanilla's render pipeline binds
+        // the lightmap to its own texture unit (managed by RenderSystem), so we have to do it
+        // ourselves here on the unit FP2 cares about. Save/restore active TU so we don't disturb
+        // vanilla state for subsequent render stages.
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        int lightmapId = LightmapAccess1_21.textureId(mc.gameRenderer.lightTexture());
+        int prevActiveTU = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
+        int prevTU1Binding;
+        GL13.glActiveTexture(GL13.GL_TEXTURE1);
+        prevTU1Binding = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, lightmapId);
+        try {
+            renderer.render(this.fp2_cameraState, drawState);
+        } finally {
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTU1Binding);
+            GL13.glActiveTexture(prevActiveTU);
+        }
     }
     //?}
 
