@@ -25,7 +25,9 @@ import net.daporkchop.fp2.core.engine.api.ctx.IFarClientContext;
 import net.daporkchop.fp2.core.engine.client.AbstractFarRenderer;
 import net.daporkchop.fp2.mc.client.player.FarPlayerClient1_21;
 import net.daporkchop.fp2.mc.client.render.Frustum1_21;
+import net.daporkchop.fp2.mc.client.render.LevelRenderer1_21;
 import net.daporkchop.fp2.mc.client.render.LightmapAccess1_21;
+import net.daporkchop.fp2.mc.client.render.TerrainRenderingBlockedTracker1_21;
 import net.daporkchop.fp2.mc.client.world.FWorldClient1_21;
 import net.daporkchop.fp2.mc.compat.vanilla.FP2VanillaClient1_21;
 import net.minecraft.world.phys.Vec3;
@@ -124,6 +126,17 @@ public class FP2Client1_21 extends FP2Client {
         this.fp2_cameraState.setModelViewMatrixAndProjectionMatrix(this.fp2_modelView, this.fp2_projection, this);
         Vec3 pos = event.getCamera().getPosition();
         this.fp2_cameraState.positionDouble(pos.x, pos.y, pos.z);
+
+        // Update the occlusion tracker from this frame's vanilla section state BEFORE prepare(),
+        // so renderIndex.select() inside prepare() reads current blocking flags. The tracker is
+        // a no-op until a LevelRenderer1_21 has been instantiated (renderer's levelRenderer is
+        // the FP2 interface; the concrete impl lives on FLevelClient1_21).
+        net.daporkchop.fp2.core.client.render.LevelRenderer fp2LevelRenderer = renderer.levelRenderer();
+        if (fp2LevelRenderer instanceof LevelRenderer1_21) {
+            TerrainRenderingBlockedTracker1_21 tracker = (TerrainRenderingBlockedTracker1_21)
+                    ((LevelRenderer1_21) fp2LevelRenderer).blockedTracker();
+            tracker.update(event.getLevelRenderer(), event.getFrustum());
+        }
 
         // prepare() flushes baked tile data into the renderIndex and selects which tiles to draw.
         // Must be called before render() each frame, otherwise drawableMask is permanently empty.

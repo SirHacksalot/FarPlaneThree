@@ -4,6 +4,8 @@
   "compatibilityLevel": "JAVA_21",
   "minVersion": "0.8.5",
   "client": [
+    "client.renderer.AccessorLevelRenderer1_21",
+    "client.renderer.AccessorViewArea1_21",
     "client.renderer.MixinGameRenderer1_21"
   ],
   "injectors": {
