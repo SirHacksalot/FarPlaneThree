@@ -3,6 +3,7 @@ package net.daporkchop.fp2.mc.asm.client.renderer;
 //? if neoforge {
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.SectionOcclusionGraph;
 import net.minecraft.client.renderer.ViewArea;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import org.spongepowered.asm.mixin.Mixin;
@@ -27,5 +28,8 @@ public interface AccessorLevelRenderer1_21 {
 
     @Accessor("lastCameraSectionZ")
     int fp2_getLastCameraSectionZ();
+
+    @Accessor("sectionOcclusionGraph")
+    SectionOcclusionGraph fp2_getSectionOcclusionGraph();
 }
 //?}

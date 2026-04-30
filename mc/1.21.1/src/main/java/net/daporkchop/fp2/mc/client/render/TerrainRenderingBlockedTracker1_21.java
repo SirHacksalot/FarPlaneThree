@@ -5,27 +5,29 @@ import lombok.NonNull;
 import net.daporkchop.fp2.core.client.FP2Client;
 import net.daporkchop.fp2.core.client.render.TerrainRenderingBlockedTracker;
 import net.daporkchop.fp2.mc.asm.client.renderer.AccessorLevelRenderer1_21;
+import net.daporkchop.fp2.mc.asm.client.renderer.AccessorSectionOcclusionGraphNode1_21;
 import net.daporkchop.fp2.mc.asm.client.renderer.AccessorViewArea1_21;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.SectionOcclusionGraph;
 import net.minecraft.client.renderer.ViewArea;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 
+import java.util.Collection;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 // Bridges 1.21's section-graph state to FP2's TerrainRenderingBlockedTracker bit-flag layout.
-// 1.21 doesn't expose the per-section "entered from direction" data that 1.12.2 / 1.16 used —
-// LevelRenderer's graph traversal is internalised. We compensate by:
-//   - leaving inFace flags zeroed (which transformFlags treats as "all directions visible"),
-//   - leaving renderDirection flags zeroed (which causes no neighbor face to be skipped).
-// The resulting cull is more conservative than the 1.16 algorithm (we mark fewer chunks as
-// FP2-blocking), but never incorrect — a section blocks FP2 only if the section AND all 6
-// neighbors are baked + selected for rendering this frame. Visible boundary artifacts from
-// over-eager FP2 LOD-0 will diminish but not vanish entirely; full parity needs Mixins into
-// the section-graph traversal itself.
+// Per-section graph-traversal direction data is recovered from SectionOcclusionGraph$Node via
+// SectionGraphAccess1_21 (reflection through package-private GraphState/GraphStorage records).
+// Each Node exposes `directions` (bitmask of neighbors this node will traverse to —
+// 1.16-equivalent: hasDirection) and `sourceDirections` (bitmask of neighbors this node was
+// entered from — 1.16-equivalent: getSourceDirection). We pick the lowest set bit of
+// sourceDirections as the canonical inFace; transformFlags uses it to skip the inFace direction
+// when scanning neighbors. With these flags populated, the algorithm matches 1.16's behavior
+// and the boundary overlap artifacts shrink to the actual edge of vanilla's render distance.
 public class TerrainRenderingBlockedTracker1_21 extends TerrainRenderingBlockedTracker {
     protected static final Direction[] DIRECTIONS = Direction.values();
 
@@ -88,7 +90,54 @@ public class TerrainRenderingBlockedTracker1_21 extends TerrainRenderingBlockedT
 
         long[] srcFlags = new long[factorChunkX * factorChunkY * factorChunkZ];
 
-        //pass 1: mark sections selected for rendering this frame
+        //pass 1: walk the SectionOcclusionGraph nodes for selected sections + their direction info
+        SectionOcclusionGraph graph = lrAcc.fp2_getSectionOcclusionGraph();
+        if (graph != null) {
+            Collection<Object> nodes = SectionGraphAccess1_21.renderSections(graph);
+            if (nodes != null) {
+                for (Object node : nodes) {
+                    AccessorSectionOcclusionGraphNode1_21 nodeAcc = (AccessorSectionOcclusionGraphNode1_21) node;
+                    SectionRenderDispatcher.RenderSection section = nodeAcc.fp2_getSection();
+                    BlockPos pos = section.getOrigin();
+                    int cx = pos.getX() >> 4;
+                    int cy = pos.getY() >> 4;
+                    int cz = pos.getZ() >> 4;
+                    if (cx < minChunkX || cx >= maxChunkX
+                            || cy < minChunkY || cy >= maxChunkY
+                            || cz < minChunkZ || cz >= maxChunkZ) {
+                        continue;
+                    }
+                    int idx = ((cx + offsetChunkX) * factorChunkY + (cy + offsetChunkY)) * factorChunkZ + (cz + offsetChunkZ);
+                    long flags = srcFlags[idx] | FLAG_SELECTED | FLAG_RENDERABLE;
+
+                    //renderDirection flags: which neighbors this section will continue traversal to
+                    byte directions = nodeAcc.fp2_getDirections();
+                    int renderShift = SHIFT_RENDER_DIRECTIONS;
+                    for (Direction d : DIRECTIONS) {
+                        if ((directions & (1 << d.ordinal())) != 0) {
+                            flags |= 1L << renderShift;
+                        }
+                        renderShift++;
+                    }
+
+                    //inFace: pick the lowest set bit of sourceDirections (1.21 uses a bitmask
+                    //since multiple paths can reach the same node; transformFlags only takes
+                    //one canonical direction)
+                    byte sources = nodeAcc.fp2_getSourceDirections();
+                    if (sources != 0) {
+                        int firstSrc = Integer.numberOfTrailingZeros(sources & 0xFF);
+                        if (firstSrc < DIRECTIONS.length) {
+                            flags |= ((long) (firstSrc + 1)) << SHIFT_INFACE;
+                        }
+                    }
+
+                    srcFlags[idx] = flags;
+                }
+            }
+        }
+
+        //fallback: also mark any sections in visibleSections that weren't in the graph nodes
+        //(defensive — the two should match in practice, but be robust to graph not yet built)
         for (SectionRenderDispatcher.RenderSection section : lrAcc.fp2_getVisibleSections()) {
             BlockPos pos = section.getOrigin();
             int cx = pos.getX() >> 4;
@@ -97,7 +146,7 @@ public class TerrainRenderingBlockedTracker1_21 extends TerrainRenderingBlockedT
             if (cx < minChunkX || cx >= maxChunkX
                     || cy < minChunkY || cy >= maxChunkY
                     || cz < minChunkZ || cz >= maxChunkZ) {
-                continue; //defensively skip out-of-grid sections
+                continue;
             }
             int idx = ((cx + offsetChunkX) * factorChunkY + (cy + offsetChunkY)) * factorChunkZ + (cz + offsetChunkZ);
             srcFlags[idx] |= FLAG_SELECTED | FLAG_RENDERABLE;

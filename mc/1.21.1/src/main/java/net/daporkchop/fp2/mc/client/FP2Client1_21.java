@@ -34,8 +34,10 @@ import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.ViewportEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
+import net.minecraft.world.level.material.FogType;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL13;
 //?}
@@ -96,6 +98,22 @@ public class FP2Client1_21 extends FP2Client {
         }
     }
 
+    // Push vanilla's terrain fog distances effectively to infinity. With FP2 active, vanilla's
+    // fog (calibrated to ~12-chunk view distance) would otherwise fade FP2 LODs aggressively
+    // long before they reach FP2's actual far plane. We only override FogType.NONE (the default
+    // distance fog) — water/nether/lava/powder-snow fog stays untouched so swimming and the
+    // Nether still feel right.
+    @SubscribeEvent
+    public void onRenderFog(ViewportEvent.RenderFog event) {
+        if (event.getType() == FogType.NONE
+                && this.currentPlayerInstance != null
+                && this.currentPlayerInstance.activeContext() != null) {
+            event.setNearPlaneDistance(Float.MAX_VALUE);
+            event.setFarPlaneDistance(Float.MAX_VALUE);
+            event.setCanceled(true);
+        }
+    }
+
     @SubscribeEvent
     public void onPlayerTick(PlayerTickEvent.Post event) {
         if (!event.getEntity().level().isClientSide()) return;
@@ -142,6 +160,8 @@ public class FP2Client1_21 extends FP2Client {
         // Must be called before render() each frame, otherwise drawableMask is permanently empty.
         renderer.prepare(this.fp2_cameraState, new Frustum1_21(event.getFrustum()));
 
+        // FP2 fog disabled — onRenderFog above pushes vanilla's distance fog out of view, so
+        // there's no boundary fade to match. Crisp visibility all the way to FP2's far plane.
         DrawState drawState = new DrawState();
         drawState.fogMode = DrawState.FogMode.DISABLED;
         drawState.fogStart = 0.0f;
@@ -151,7 +171,12 @@ public class FP2Client1_21 extends FP2Client {
         drawState.fogColorG = 0.0f;
         drawState.fogColorB = 0.0f;
         drawState.fogColorA = 1.0f;
-        drawState.alphaRefCutout = 0.1f;
+        // Lower the cutoff threshold for LOD rendering: at distance, mipmapping averages alpha
+        // across leaf-pixel/gap-pixel pairs into something below vanilla's 0.1f cutoff, so most
+        // leaf fragments would discard and the canopy looks gauzy. With ~0 cutoff only fully
+        // transparent fragments discard, keeping LOD leaves visually dense to match vanilla's
+        // close-range appearance.
+        drawState.alphaRefCutout = 0.001f;
 
         // Bind Minecraft's block atlas to TU0 (terrainTextureUnit) and lightmap to TU1
         // (lightmapTextureUnit) before render(). Without these, block.frag's `sampleTerrain()`
