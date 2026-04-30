@@ -3,75 +3,47 @@ package net.daporkchop.fp2.mc.server.player;
 //? if neoforge {
 import lombok.Getter;
 import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 import net.daporkchop.fp2.core.FP2Core;
-import net.daporkchop.fp2.core.config.FP2Config;
 import net.daporkchop.fp2.core.network.IPacket;
 import net.daporkchop.fp2.core.network.flow.FlowControl;
-import net.daporkchop.fp2.core.server.player.IFarPlayerServer;
-import net.daporkchop.fp2.core.server.world.level.IFarLevelServer;
+import net.daporkchop.fp2.core.server.player.AbstractFarPlayerServer;
 import net.daporkchop.fp2.mc.network.FP2Network1_21;
 import net.daporkchop.lib.math.vector.Vec3d;
 import net.minecraft.server.level.ServerPlayer;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 
 import java.util.function.Consumer;
 
+@RequiredArgsConstructor
 @Getter
-public class FarPlayerServer1_21 implements IFarPlayerServer {
-    private static final Logger LOGGER = LogManager.getLogger(FarPlayerServer1_21.class);
-
-    private final FP2Core fp2;
-    private final ServerPlayer player;
-
-    public FarPlayerServer1_21(@NonNull FP2Core fp2, @NonNull ServerPlayer player) {
-        this.fp2 = fp2;
-        this.player = player;
-    }
+public class FarPlayerServer1_21 extends AbstractFarPlayerServer {
+    @NonNull
+    protected final FP2Core fp2;
+    @NonNull
+    protected final ServerPlayer player;
 
     @Override
     public Vec3d fp2_IFarPlayer_position() {
-        return Vec3d.of(player.getX(), player.getY(), player.getZ());
-    }
-
-    @Override
-    public void fp2_IFarPlayerServer_handle(@NonNull Object packet) {
-        LOGGER.info("FP2: server received packet: {}", packet.getClass().getSimpleName());
-    }
-
-    @Override
-    public void fp2_IFarPlayer_serverConfig(FP2Config serverConfig) {
-        // TODO: send SPacketUpdateConfig to client
-    }
-
-    @Override
-    public void fp2_IFarPlayer_joinedWorld(@NonNull IFarLevelServer world) {
-        // TODO: begin tile streaming for this world
+        return Vec3d.of(this.player.getX(), this.player.getY(), this.player.getZ());
     }
 
     @Override
     public void fp2_IFarPlayer_sendPacket(@NonNull IPacket packet) {
-        FP2Network1_21.sendToPlayer(packet, this.player);
+        if (!this.closed) {
+            FP2Network1_21.sendToPlayer(packet, this.player);
+        }
     }
 
     @Override
     public void fp2_IFarPlayer_sendPacket(@NonNull IPacket packet, Consumer<Throwable> handler) {
-        FP2Network1_21.sendToPlayer(packet, this.player, handler);
+        if (!this.closed) {
+            FP2Network1_21.sendToPlayer(packet, this.player, handler);
+        }
     }
 
     @Override
     public FlowControl fp2_IFarPlayer_flowControl() {
         return FlowControl.none();
-    }
-
-    @Override
-    public void fp2_IFarPlayer_update() {
-        // TODO: periodic per-tick update
-    }
-
-    @Override
-    public void fp2_IFarPlayer_close() {
-        // TODO: clean up tile streaming resources
     }
 }
 //?}

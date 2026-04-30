@@ -57,8 +57,18 @@ public abstract class FP2Server {
         }
 
         System.setProperty("porklib.native.printStackTraces", "true");
-        if (!Zstd.PROVIDER.isNative()) {
-            this.fp2().log().alert("Native ZSTD could not be loaded! This will have SERIOUS performance implications!");
+        try {
+            if (!Zstd.PROVIDER.isNative()) {
+                this.fp2().log().alert("Native ZSTD could not be loaded! This will have SERIOUS performance implications!");
+            }
+        } catch (Throwable t) {
+            // Zstd.<clinit> fails here because BootstrapLauncher's MC-BOOTSTRAP layer does not
+            // inherit --add-opens from JVM startup flags: PorkLib's JNI loader calls Runtime.load0
+            // via reflection and gets InaccessibleObjectException, so Zstd.PROVIDER is never set
+            // and the class is permanently broken. Catch here only to prevent FMLCommonSetupEvent
+            // from aborting; ZSTD compression will be unavailable until the native loading path
+            // is fixed (TODO: patch natives-*.jar to use System.load() instead).
+            this.fp2().log().alert("Native ZSTD availability could not be determined (%s). ZSTD compression will be unavailable!", t);
         }
 
         //register self to listen for events

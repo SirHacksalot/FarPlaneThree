@@ -10,17 +10,25 @@ import net.daporkchop.fp2.core.server.player.IFarPlayerServer;
 import net.daporkchop.fp2.core.util.threading.futureexecutor.FutureExecutor;
 
 //? if neoforge {
+import net.daporkchop.fp2.core.server.event.ColumnSavedEvent;
+import net.daporkchop.fp2.core.server.event.TickEndEvent;
 import net.daporkchop.fp2.mc.compat.vanilla.FP2Vanilla1_21;
 import net.daporkchop.fp2.mc.server.player.FarPlayerServer1_21;
+import net.daporkchop.fp2.mc.server.world.FColumn1_21;
 import net.daporkchop.fp2.mc.server.world.FWorldServer1_21;
 import net.daporkchop.fp2.mc.server.world.level.FLevelServer1_21;
+import net.daporkchop.lib.math.vector.Vec2i;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.chunk.ChunkAccess;
+import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.level.ChunkDataEvent;
 import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.server.ServerAboutToStartEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
@@ -127,7 +135,24 @@ public class FP2Server1_21 extends FP2Server {
         FWorldServer1_21 w = this.world;
         if (w != null) {
             w.serverExecutor().tick();
+            w.levelsByKey().values().forEach(level -> level.eventBus().fire(new TickEndEvent()));
+            this.players.values().forEach(player -> player.fp2_IFarPlayer_update());
         }
+    }
+
+    @SubscribeEvent(priority = EventPriority.LOWEST)
+    public void onChunkDataSave(ChunkDataEvent.Save event) {
+        if (!(event.getLevel() instanceof ServerLevel serverLevel)) return;
+        FWorldServer1_21 w = this.world;
+        if (w == null) return;
+        FLevelServer1_21 fp2Level = w.getLevel(serverLevel.dimension());
+        if (fp2Level == null) return;
+        ChunkAccess chunk = event.getChunk();
+        CompoundTag nbt = event.getData();
+        fp2Level.eventBus().fire(new ColumnSavedEvent(
+                Vec2i.of(chunk.getPos().x, chunk.getPos().z),
+                new FColumn1_21(chunk.getPos(), nbt),
+                nbt));
     }
 
     @SubscribeEvent
@@ -139,6 +164,17 @@ public class FP2Server1_21 extends FP2Server {
         this.players.put(serverPlayer.getUUID(), fp2Player);
         fp2Player.fp2_IFarPlayer_serverConfig(this.fp2.globalConfig());
         fp2Player.fp2_IFarPlayer_sendPacket(SPacketHandshake.create());
+
+        // EntityJoinLevelEvent fires BEFORE PlayerLoggedInEvent in PlayerList.placeNewPlayer, so
+        // onEntityJoinLevel sees no registered player on initial login. Wire the player's world
+        // here too. onEntityJoinLevel still handles dimension changes after login.
+        FWorldServer1_21 w = this.world;
+        if (w != null) {
+            FLevelServer1_21 level = w.getLevel(serverPlayer.serverLevel().dimension());
+            if (level != null) {
+                fp2Player.fp2_IFarPlayer_joinedWorld(level);
+            }
+        }
     }
 
     @SubscribeEvent

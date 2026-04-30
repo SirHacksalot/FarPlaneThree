@@ -19,6 +19,7 @@
 
 package net.daporkchop.fp2.common.util;
 
+import lombok.SneakyThrows;
 import lombok.experimental.UtilityClass;
 import net.daporkchop.lib.common.annotation.TransferOwnership;
 import net.daporkchop.lib.common.annotation.param.NotNegative;
@@ -28,8 +29,6 @@ import net.daporkchop.lib.common.reference.cache.Cached;
 import net.daporkchop.lib.common.util.PorkUtil;
 import net.daporkchop.lib.unsafe.PUnsafe;
 
-import java.lang.invoke.MethodHandle;
-import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Field;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
@@ -47,19 +46,22 @@ import static net.daporkchop.lib.common.util.PValidation.*;
  */
 @UtilityClass
 public class DirectBufferHackery {
-    private static final MethodHandle BUFFER_ADDRESS_GET;
-    private static final MethodHandle BUFFER_ADDRESS_SET;
-    private static final MethodHandle BUFFER_CAPACITY_SET;
+    // Buffer.address is a private long field; Buffer.capacity is a private int field. We bypass
+    // Field.setAccessible (which under JPMS requires --add-opens=java.base/java.nio=...) by using
+    // sun.misc.Unsafe.objectFieldOffset directly. The Unsafe path is privileged and doesn't
+    // perform the JPMS opens check, so it works in any module layer including NeoForge MC-BOOTSTRAP.
+    private static final long BUFFER_ADDRESS_OFFSET;
+    private static final long BUFFER_CAPACITY_OFFSET;
+
+    @SneakyThrows(NoSuchFieldException.class)
+    private static long fieldOffset(String name) {
+        Field f = Buffer.class.getDeclaredField(name);
+        return PUnsafe.objectFieldOffset(f);
+    }
 
     static {
-        Field _Buffer_address = Buffer.class.getDeclaredField("address");
-        _Buffer_address.setAccessible(true);
-        BUFFER_ADDRESS_GET = MethodHandles.publicLookup().unreflectGetter(_Buffer_address);
-        BUFFER_ADDRESS_SET = MethodHandles.publicLookup().unreflectSetter(_Buffer_address);
-
-        Field _Buffer_capacity = Buffer.class.getDeclaredField("capacity");
-        _Buffer_capacity.setAccessible(true);
-        BUFFER_CAPACITY_SET = MethodHandles.publicLookup().unreflectSetter(_Buffer_capacity);
+        BUFFER_ADDRESS_OFFSET = fieldOffset("address");
+        BUFFER_CAPACITY_OFFSET = fieldOffset("capacity");
     }
 
     private final Class<ByteBuffer> BYTE = PorkUtil.classForName("java.nio.DirectByteBuffer");
@@ -86,7 +88,7 @@ public class DirectBufferHackery {
 
     private static long address(Buffer buffer) {
         checkDirect(buffer);
-        return (long) BUFFER_ADDRESS_GET.invokeExact(buffer);
+        return PUnsafe.getLong(buffer, BUFFER_ADDRESS_OFFSET);
     }
 
     /**
@@ -100,8 +102,8 @@ public class DirectBufferHackery {
     public static <B extends Buffer> B resetEmpty(B buffer) {
         checkDirect(buffer);
 
-        BUFFER_ADDRESS_SET.invokeExact(buffer, 0L);
-        BUFFER_CAPACITY_SET.invokeExact(buffer, 0);
+        PUnsafe.putLong(buffer, BUFFER_ADDRESS_OFFSET, 0L);
+        PUnsafe.putInt(buffer, BUFFER_CAPACITY_OFFSET, 0);
         buffer.clear();
         return buffer;
     }
@@ -121,8 +123,8 @@ public class DirectBufferHackery {
         checkArg(address != 0L, "address may not be null");
         notNegative(capacity, "capacity");
 
-        BUFFER_ADDRESS_SET.invokeExact(buffer, address);
-        BUFFER_CAPACITY_SET.invokeExact(buffer, capacity);
+        PUnsafe.putLong(buffer, BUFFER_ADDRESS_OFFSET, address);
+        PUnsafe.putInt(buffer, BUFFER_CAPACITY_OFFSET, capacity);
         buffer.clear();
         return buffer;
     }

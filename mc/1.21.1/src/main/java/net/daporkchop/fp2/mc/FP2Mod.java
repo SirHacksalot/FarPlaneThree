@@ -41,10 +41,10 @@ public class FP2Mod extends FP2Core {
     }
 
     private void onCommonSetup(FMLCommonSetupEvent event) {
-        LogManager.getLogger(FP2.MODID).info("fp2.flagcheck={}", System.getProperty("fp2.flagcheck", "<null>"));
         this.init();
         if (FMLEnvironment.dist == Dist.CLIENT) {
             this.client(new FP2Client1_21(this));
+            event.enqueueWork(() -> this.client().init(ImmediateFutureExecutor.INSTANCE));
         }
         this.server(new FP2Server1_21(this));
         this.server().init(ImmediateFutureExecutor.INSTANCE);
@@ -62,6 +62,7 @@ public class FP2Mod extends FP2Core {
         this.init();
         if (FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT) {
             this.client(new FP2Client1_21(this));
+            // TODO fabric: wire client().init() with a render-thread callback
         }
         this.server(new FP2Server1_21(this));
         this.server().init(ImmediateFutureExecutor.INSTANCE);

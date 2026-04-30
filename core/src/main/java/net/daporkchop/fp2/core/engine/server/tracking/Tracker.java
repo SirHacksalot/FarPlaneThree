@@ -98,6 +98,10 @@ public final class Tracker {
     private volatile TrackingState nextState;
 
     private final ReentrantLock queuePausedLock = new ReentrantLock();
+    // Replaces the intrinsic monitor (formerly `synchronized(this)` + PUnsafe.tryMonitorEnter/
+    // monitorExit). sun.misc.Unsafe.tryMonitorEnter was removed in JDK 9, so this code can no
+    // longer rely on the intrinsic monitor for its non-blocking try-lock semantics.
+    private final ReentrantLock lock = new ReentrantLock();
     private volatile boolean closed = false;
 
     private long lastUpdateTime;
@@ -218,11 +222,14 @@ public final class Tracker {
      * <p>
      * {@link #unpauseQueue()} must be called at some point after calling this method, otherwise tile loading will stop.
      */
-    private void pauseQueue() { //synchronizing is, in fact, critical to making this work (i think)
-        assert !Thread.holdsLock(this) : "current thread may not hold a lock";
+    private void pauseQueue() { //holding `lock` here is critical: it blocks updateWaiting() (which try-locks the same lock) until queuePausedLock is acquired
+        assert !this.lock.isHeldByCurrentThread() : "current thread may not hold a lock";
 
-        synchronized (this) {
+        this.lock.lock();
+        try {
             this.queuePausedLock.lock();
+        } finally {
+            this.lock.unlock();
         }
     }
 
@@ -230,7 +237,7 @@ public final class Tracker {
      * Unpauses the load queue, allowing waiting positions to be added again.
      */
     private void unpauseQueue() {
-        assert !Thread.holdsLock(this) : "current thread must hold this tracker's lock";
+        assert !this.lock.isHeldByCurrentThread() : "current thread must not hold this tracker's lock";
         assert this.isQueuePaused() : "queue must be paused";
         assert this.queuePausedLock.isHeldByCurrentThread() : "queue must be paused by the current thread";
 
@@ -269,7 +276,7 @@ public final class Tracker {
      * Mark completed tiles as loaded, and replaces them by beginning to wait on new positions from the queue (if possible).
      */
     private void updateWaiting() {
-        if (Thread.holdsLock(this)) { //this thread already holds this tracker's lock! to avoid recursive invocations to this.manager.beginTracking(), we'll schedule a call
+        if (this.lock.isHeldByCurrentThread()) { //this thread already holds this tracker's lock! to avoid recursive invocations to this.manager.beginTracking(), we'll schedule a call
             //  to doUpdate() from the tracker executor, which will eventually call updateWaiting() again.
             this.manager.scheduler().schedule(this);
             return;
@@ -283,7 +290,7 @@ public final class Tracker {
                 return;
             }
 
-            if (!PUnsafe.tryMonitorEnter(this)) { //this tracker's monitor is already held!
+            if (!this.lock.tryLock()) { //this tracker's lock is already held!
                 //there are three ways this can happen, in all of which it is safe for us to exit without potentially missing positions:
                 //  - a tracker thread is currently running updateState(), in which case it'll eventually release the monitor and call updateFillLoadQueue()
                 //  - some other thread (tracker or terrain) is currently running updateFillLoadQueue(), in which case it'll loop around again (so we can be sure
@@ -328,7 +335,7 @@ public final class Tracker {
                 positions.forEach(pos -> this.manager.beginTracking(this, pos));
                 positions.clear();
             } finally {
-                PUnsafe.monitorExit(this);
+                this.lock.unlock();
             }
         } while (!this.doneWaitingPositions.isEmpty() || this.waitingPositions.size() < targetLoadQueueSize);
     }

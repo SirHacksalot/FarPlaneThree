@@ -46,6 +46,7 @@ import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.stream.Stream;
@@ -235,7 +236,7 @@ public final class TrackerManager implements FTileStorage.Listener, AutoCloseabl
             public Entry apply(@NonNull TilePos pos, Entry entry) {
                 if (entry == null) { //no entry exists at this position, so we should make a new one
                     entry = new Entry(pos);
-                } else if (PUnsafe.tryMonitorEnter(entry)) {
+                } else if (entry.lock.tryLock()) {
                     this.entry = entry;
                 }
 
@@ -247,7 +248,7 @@ public final class TrackerManager implements FTileStorage.Listener, AutoCloseabl
                 try {
                     this.entry.addTracker(tracker);
                 } finally {
-                    PUnsafe.monitorExit(this.entry);
+                    this.entry.lock.unlock();
                 }
             }
         }
@@ -267,7 +268,7 @@ public final class TrackerManager implements FTileStorage.Listener, AutoCloseabl
             public Entry apply(@NonNull TilePos pos, Entry entry) {
                 checkState(entry != null, "cannot remove player %s from non-existent tracking entry at %s", tracker, pos);
 
-                if (!PUnsafe.tryMonitorEnter(entry)) { //failed to acquire a lock, break out and spin
+                if (!entry.lock.tryLock()) { //failed to acquire a lock, break out and spin
                     this.spin = true;
                     return entry;
                 }
@@ -276,7 +277,7 @@ public final class TrackerManager implements FTileStorage.Listener, AutoCloseabl
                     this.spin = false;
                     return entry.removeTracker(tracker);
                 } finally {
-                    PUnsafe.monitorExit(entry);
+                    entry.lock.unlock();
                 }
             }
         }
@@ -300,7 +301,7 @@ public final class TrackerManager implements FTileStorage.Listener, AutoCloseabl
         @Override
         public Entry apply(@NonNull TilePos pos, @NonNull Entry entry) {
             this.entry = entry;
-            this.spin = !PUnsafe.tryMonitorEnter(entry);
+            this.spin = !entry.lock.tryLock();
 
             return entry;
         }
@@ -319,7 +320,7 @@ public final class TrackerManager implements FTileStorage.Listener, AutoCloseabl
                 try {
                     this.run(this.entry);
                 } finally {
-                    PUnsafe.monitorExit(this.entry);
+                    this.entry.lock.unlock();
                 }
             }
         }
@@ -340,6 +341,11 @@ public final class TrackerManager implements FTileStorage.Listener, AutoCloseabl
         //  pointer chasing.
 
         protected final TilePos pos;
+
+        // Replaces the intrinsic monitor (formerly PUnsafe.tryMonitorEnter/monitorExit and
+        // Thread.holdsLock(this) in accept/apply). sun.misc.Unsafe.tryMonitorEnter was removed
+        // in JDK 9, so the non-blocking try-lock semantics now go through ReentrantLock.tryLock.
+        protected final ReentrantLock lock = new ReentrantLock();
 
         protected CompletableFuture<ITileHandle> loadFuture;
         protected CompletableFuture<ITileHandle> updateFuture;
@@ -417,7 +423,7 @@ public final class TrackerManager implements FTileStorage.Listener, AutoCloseabl
         @Override
         @Deprecated
         public void accept(ITileHandle handle, Throwable t) { //used by loadFuture
-            if (Thread.holdsLock(this)) { //the thenAccept callback was fired immediately
+            if (this.lock.isHeldByCurrentThread()) { //the thenAccept callback was fired immediately
                 this.tileLoaded(handle, t);
             } else { //future was completed from another thread - go through TrackerManager in order to acquire a lock
                 TrackerManager.this.tileLoaded(this.pos, handle, t);
@@ -527,7 +533,7 @@ public final class TrackerManager implements FTileStorage.Listener, AutoCloseabl
         @Override
         @Deprecated
         public Void apply(ITileHandle handle, Throwable t) { //used by updateFuture
-            if (Thread.holdsLock(this)) { //the thenApply callback was fired immediately
+            if (this.lock.isHeldByCurrentThread()) { //the thenApply callback was fired immediately
                 this.tileUpdated(handle, t);
             } else { //future was completed from another thread - go through TrackerManager in order to acquire a lock
                 TrackerManager.this.tileUpdated(this.pos, handle, t);

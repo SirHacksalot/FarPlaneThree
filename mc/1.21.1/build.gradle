@@ -39,11 +39,101 @@ stonecutter.const 'fabric', project.name == 'fabric'
 // FP2 modules + their transitive deps via a detached configuration.
 // Wrapped in files() to produce FileCollectionDependency instead of ProjectDependency,
 // sidestepping Loom's getLoomProjectDependencies() which calls getPath() removed in Gradle 8.8.
+// FP2 modules + the one external runtime dep (rocksdbjni) that isn't already provided by
+// Minecraft/NeoForge. Other implementationProvided deps (guava, fastutil, netty, gson, asm) are
+// coincidentally on the MC runtime classpath; rocksdbjni is not, and AbstractWorldServer needs
+// it on the MC-BOOTSTRAP layer to load worlds.
 def fp2CompileDeps = configurations.detachedConfiguration(
     dependencies.create(project(':api')),
     dependencies.create(project(':core')),
-    dependencies.create(project(':core:log4j'))
+    dependencies.create(project(':core:log4j')),
+    dependencies.create(project(':core:minecraft')),
+    dependencies.create(project(':gl:codegen')),
+    dependencies.create(project(':gl:opengl-lwjgl3')),
+    dependencies.create("org.rocksdb:rocksdbjni:$rocksdbVersion")
 )
+
+// Merges multiple jars into one, setting Automatic-Module-Name in MANIFEST.MF.
+// Used to combine jars that share the same Java package so MC-BOOTSTRAP treats them as a single
+// JPMS module — avoiding ModuleClassLoader.findResourceList()'s package-ownership map, which
+// would otherwise exclude resources from secondary jars in the same package.
+def mergeJarsWithManifest(List<File> inputs, File output, String moduleName) {
+    println "FP2: merging ${inputs*.name.join(' + ')} -> ${output.name} (Automatic-Module-Name: ${moduleName})"
+    output.parentFile.mkdirs()
+    def manifest = new java.util.jar.Manifest()
+    manifest.mainAttributes.put(java.util.jar.Attributes.Name.MANIFEST_VERSION, '1.0')
+    manifest.mainAttributes.putValue('Automatic-Module-Name', moduleName)
+    def seenEntries = ['META-INF/', 'META-INF/MANIFEST.MF'] as HashSet
+    def zout = new java.util.jar.JarOutputStream(new java.io.FileOutputStream(output), manifest)
+    try {
+        inputs.each { input ->
+            def zin = new java.util.jar.JarFile(input)
+            try {
+                zin.entries().each { entry ->
+                    if (seenEntries.contains(entry.name)) return
+                    seenEntries.add(entry.name)
+                    zout.putNextEntry(new java.util.jar.JarEntry(entry.name))
+                    zout.write(zin.getInputStream(entry).readAllBytes())
+                    zout.closeEntry()
+                }
+            } finally {
+                zin.close()
+            }
+        }
+    } finally {
+        zout.close()
+    }
+}
+
+// Copies a jar to output, adding or replacing Automatic-Module-Name in MANIFEST.MF.
+// Used to give FP2/PorkLib jars explicit JPMS names so they can coexist in MC-BOOTSTRAP
+// without conflicting with each other or with NeoForge's built-in "minecraft"/"logging" modules.
+def patchManifest(File input, File output, String moduleName) {
+    println "FP2: patching manifest ${input.name} (Automatic-Module-Name: ${moduleName})"
+    output.parentFile.mkdirs()
+    def zin = new java.util.jar.JarFile(input)
+    def manifest = zin.manifest ?: new java.util.jar.Manifest()
+    manifest.mainAttributes.putValue('Automatic-Module-Name', moduleName)
+    def zout = new java.util.jar.JarOutputStream(new java.io.FileOutputStream(output), manifest)
+    try {
+        zin.entries().each { entry ->
+            // META-INF/ and MANIFEST.MF are both written by the JarOutputStream(manifest) constructor
+            if (entry.name == 'META-INF/' || entry.name == 'META-INF/MANIFEST.MF') return
+            zout.putNextEntry(new java.util.jar.JarEntry(entry.name))
+            zout.write(zin.getInputStream(entry).readAllBytes())
+            zout.closeEntry()
+        }
+    } finally {
+        zout.close()
+        zin.close()
+    }
+}
+
+// Returns the desired Automatic-Module-Name for a jar, or null if no patching is needed.
+// FP2 project jars get proper net.daporkchop.fp2.* names; PorkLib jars that would otherwise
+// clash with existing MC-BOOTSTRAP entries get net.daporkchop.lib.* names.
+def getAutomaticModuleName(File jar) {
+    def path = jar.absolutePath.replace('\\', '/')
+    // FP2 project jars built in this workspace
+    if (path.contains('/FarPlaneReborn/')) {
+        if (jar.name.startsWith('api-'))       return 'net.daporkchop.fp2.api'
+        if (jar.name.startsWith('common-'))    return 'net.daporkchop.fp2.common'
+        if (jar.name.startsWith('core-'))      return 'net.daporkchop.fp2.core'
+        if (jar.name.startsWith('log4j-'))     return 'net.daporkchop.fp2.core.log4j'
+        if (jar.name.startsWith('minecraft-')) return 'net.daporkchop.fp2.core.minecraft'
+        if (jar.name.startsWith('gl-'))        return 'net.daporkchop.fp2.gl'
+        // opengl-lwjgl3-*.jar is merged into gl-*.jar by prepareRunClasspath; no separate entry needed.
+    }
+    // PorkLib jars whose filename-derived JPMS names conflict with existing legacyClassPath entries,
+    // or whose derived names are version-qualified (e.g. natives.SNAPSHOT) causing --add-opens to break:
+    //   common-*.jar    → "common"  (conflicts with FP2 common above)
+    //   logging-*.jar   → "logging" (conflicts with com.mojang:logging already in classpath)
+    //   natives-*.jar   → "natives.SNAPSHOT" (JPMS strips digits but keeps SNAPSHOT qualifier)
+    if (path.contains('net.daporkchop.lib/common/'))  return 'net.daporkchop.lib.common'
+    if (path.contains('net.daporkchop.lib/logging/')) return 'net.daporkchop.lib.logging'
+    if (path.contains('net.daporkchop.lib/natives/')) return 'net.daporkchop.lib.natives'
+    return null
+}
 
 // Patches PUnsafe's lambda$static$1 (the jdk.internal.misc.Unsafe fetcher) to return null,
 // causing PUnsafe to fall back to sun.misc.Unsafe. Mixin cannot fix this because
@@ -112,37 +202,129 @@ def patchUnsafeJar(File input, File output) {
 if (project.name == 'neoforge') {
     loom {
         neoForge {}
+        // NOTE: This --add-opens is currently ineffective. BootstrapLauncher creates the
+        // MC-BOOTSTRAP module layer independently of JVM startup opens, so modules in that
+        // layer (including net.daporkchop.lib.natives) are not in the boot layer that
+        // --add-opens targets. The JVM emits "WARNING: Unknown module" and ignores it.
+        // TODO: patch natives-*.jar to use System.load() instead of reflective Runtime.load0.
+        runs {
+            client {
+                vmArg '--add-opens=java.base/java.lang=net.daporkchop.lib.natives'
+                // Enable FP2's debug.* config options at runtime (debugColors, vanillaTerrainRendering, etc.).
+                // Without this flag, FP2_DEBUG is false and AbstractFarRenderer forces debugColors to DISABLED.
+                property 'fp2.debug', 'true'
+            }
+            server {
+                vmArg '--add-opens=java.base/java.lang=net.daporkchop.lib.natives'
+                property 'fp2.debug', 'true'
+            }
+        }
+    }
+
+    // Adds all FP2/PorkLib jars to forge_minecraft_classpath.txt (MC-BOOTSTRAP legacyClassPath) so
+    // cpw.mods.cl.ModuleClassLoader (NeoForge GAME layer) can load FP2 classes.  FP2 jars on the
+    // Java system classpath are NOT visible to ModuleClassLoader — they must be in MC-BOOTSTRAP.
+    //
+    // JPMS module name conflicts are resolved via manifest patching (patchManifest / patchUnsafeJar):
+    //   minecraft-*.jar → net.daporkchop.fp2.core.minecraft  (avoids GAME "minecraft" collision)
+    //   common-*.jar    → net.daporkchop.fp2.common / net.daporkchop.lib.common
+    //   logging-*.jar   → net.daporkchop.lib.logging  (avoids MC-BOOTSTRAP "logging" collision)
+    //   natives-*.jar   → net.daporkchop.lib.natives  (avoids JPMS "natives.SNAPSHOT" qualifier)
+    //   unsafe-*.jar    → also patched for PUnsafe jdk.internal.misc.Unsafe neutralization
+    //   gl-*.jar + opengl-lwjgl3-*.jar → merged as net.daporkchop.fp2.gl so that
+    //       opengl.properties (in opengl-lwjgl3-*.jar, package net.daporkchop.fp2.gl) is
+    //       visible to ModuleClassLoader's package-based resource lookup (owned by gl-*.jar).
+    //
+    // The task is idempotent: it strips any previously-injected FP2/PorkLib entries (original
+    // paths and build/patched-libs/ prefix) before re-adding them, preserving the Loom-generated
+    // NeoForge/Minecraft entries.
+    tasks.register('prepareRunClasspath') {
+        group = 'fp2'
+        doLast {
+            def cpFile = project.file('.gradle/loom-cache/forge_minecraft_classpath.txt')
+            if (cpFile.exists()) {
+                def patchedLibsDir = new File(buildDir, 'patched-libs')
+                def resolved = fp2CompileDeps.resolve()
+                // Absolute paths of all FP2/PorkLib jars (original, un-patched).
+                def resolvedPaths = resolved.collect { it.absolutePath.replace('\\', '/') } as Set
+                // Prefix for any previously-patched jars we wrote to build/patched-libs.
+                def patchedLibsPrefix = patchedLibsDir.absolutePath.replace('\\', '/')
+
+                // Start from the Loom-generated entries, stripping any FP2/PorkLib jars
+                // that a prior run of this task may have injected. This keeps the task
+                // idempotent: the merged jar and standard NeoForge deps are preserved.
+                def existing = new LinkedHashSet(cpFile.readLines().findAll { line ->
+                    def trimmed = line.trim()
+                    if (!trimmed) return false
+                    def normalized = trimmed.replace('\\', '/')
+                    if (resolvedPaths.contains(normalized)) return false
+                    if (normalized.startsWith(patchedLibsPrefix)) return false
+                    return true
+                })
+
+                // gl-*.jar, opengl-lwjgl3-*.jar, and codegen-*.jar share packages under
+                // net.daporkchop.fp2.gl. ModuleClassLoader.findResourceList() uses a
+                // package→module ownership map, so resources whose package is owned by gl-*.jar
+                // would be invisible if they lived in a separate MC-BOOTSTRAP module:
+                //   opengl.properties        (opengl-lwjgl3-*.jar; package net.daporkchop.fp2.gl)
+                //   attribute/format.properties (codegen-*.jar; package net.daporkchop.fp2.gl.attribute)
+                //   draw/index/format.properties (codegen-*.jar; package net.daporkchop.fp2.gl.draw.index)
+                // Merge all three into one patched jar so they live in the same JPMS module.
+                def glJar = resolved.find { it.name.startsWith('gl-') && it.name.endsWith('.jar') }
+                def openglLwjgl3Jar = resolved.find { it.name.startsWith('opengl-lwjgl3-') && it.name.endsWith('.jar') }
+                def codegenJar = resolved.find { it.name.startsWith('codegen-') && it.name.endsWith('.jar') }
+                def glJarsToMerge = [glJar, openglLwjgl3Jar, codegenJar].findAll { it != null }
+                def mergedJarPaths = glJarsToMerge.collect { it.absolutePath } as Set
+                if (glJarsToMerge) {
+                    def mergedOutput = new File(patchedLibsDir, glJar?.name ?: 'gl-merged.jar')
+                    mergeJarsWithManifest(glJarsToMerge, mergedOutput, 'net.daporkchop.fp2.gl')
+                    existing.add(mergedOutput.absolutePath)
+                }
+
+                // Add all remaining FP2/PorkLib jars, patching manifests or bytecode as needed.
+                resolved.each { jar ->
+                    if (mergedJarPaths.contains(jar.absolutePath)) return  // handled by gl merge above
+                    if (jar.name.startsWith('unsafe-') && jar.name.endsWith('.jar')) {
+                        def patched = new File(patchedLibsDir, jar.name)
+                        patchUnsafeJar(jar, patched)
+                        existing.add(patched.absolutePath)
+                        return
+                    }
+                    def amn = getAutomaticModuleName(jar)
+                    if (amn != null) {
+                        def patched = new File(patchedLibsDir, jar.name)
+                        patchManifest(jar, patched, amn)
+                        existing.add(patched.absolutePath)
+                    } else {
+                        existing.add(jar.absolutePath)
+                    }
+                }
+                cpFile.text = existing.join('\n')
+            }
+        }
     }
 
     afterEvaluate {
         ['runClient', 'runServer', 'runData', 'runGameTestServer'].each { taskName ->
             def t = tasks.findByName(taskName)
             if (t) {
-                t.doFirst {
-                    // NeoForge reads forge_minecraft_classpath.txt as legacyClassPath.file.
-                    // Loom does not include implementation/runtimeClasspath deps there, so append manually.
-                    // unsafe-*.jar is patched first so lambda$static$1 returns null instead of throwing,
-                    // letting PUnsafe fall back to sun.misc.Unsafe without needing --add-opens.
-                    def cpFile = project.file('.gradle/loom-cache/forge_minecraft_classpath.txt')
-                    if (cpFile.exists()) {
-                        def existing = new LinkedHashSet(cpFile.readLines().findAll { it.trim() })
-                        def patchedLibsDir = new File(buildDir, 'patched-libs')
-                        fp2CompileDeps.resolve().each { jar ->
-                            if (jar.name.startsWith('unsafe-') && jar.name.endsWith('.jar')) {
-                                def patched = new File(patchedLibsDir, jar.name)
-                                patchUnsafeJar(jar, patched)
-                                existing.add(patched.absolutePath)
-                            } else {
-                                existing.add(jar.absolutePath)
-                            }
-                        }
-                        cpFile.text = existing.join('\n')
-                    }
-                }
+                t.dependsOn 'prepareRunClasspath'
+                t.dependsOn 'jar'
+                // Loom's MOD_CLASSES env var is built from Gradle SourceSets, which include
+                // IntelliJ's out/production/{classes,resources}. NeoForge's UserdevLocator passes
+                // every path to the same SecureJar pipeline, and the stale IDEA-built classes
+                // can shadow the fresh build/classes/java/main copy. Wipe out/production before
+                // each run so only Gradle's outputs are visible. IDEA recreates it on next sync.
+                t.doFirst { delete file('out/production') }
             }
         }
     }
 }
+
+// Include FP2 shader/lang resources from the shared core/resources directory.
+// core/resources is not a Gradle source set in :core, so shader files only reach
+// MC's resource manager when we add them here.
+sourceSets.main.resources.srcDirs += rootProject.file('core/resources')
 
 dependencies {
     minecraft "com.mojang:minecraft:${minecraftVersion}"
