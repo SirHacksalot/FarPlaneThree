@@ -27,6 +27,7 @@ import net.daporkchop.fp2.mc.client.player.FarPlayerClient1_21;
 import net.daporkchop.fp2.mc.client.render.Frustum1_21;
 import net.daporkchop.fp2.mc.client.render.LightmapAccess1_21;
 import net.daporkchop.fp2.mc.client.world.FWorldClient1_21;
+import net.daporkchop.fp2.mc.compat.vanilla.FP2VanillaClient1_21;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
@@ -60,6 +61,9 @@ public class FP2Client1_21 extends FP2Client {
         this.chat(new Log4jAsPorkLibLogger(LogManager.getLogger(MODID + ".chat")));
         //? if neoforge {
         NeoForge.EVENT_BUS.register(this);
+        // Register client-only vanilla integration (texUVs handlers etc.) on FP2's event bus.
+        // Server-side instances must NOT load this class (Minecraft.getInstance() would NPE).
+        this.fp2.eventBus().register(new FP2VanillaClient1_21());
         //?}
     }
 
@@ -136,23 +140,28 @@ public class FP2Client1_21 extends FP2Client {
         drawState.fogColorA = 1.0f;
         drawState.alphaRefCutout = 0.1f;
 
-        // Bind Minecraft's lightmap to TU1 so block.frag's `texture(LIGHTMAP_SAMPLER, ...)` reads
-        // real values instead of zeros (which would multiply fragment color to black). The renderer
-        // expects this — see FP2Client.lightmapTextureUnit() == 1. Vanilla's render pipeline binds
-        // the lightmap to its own texture unit (managed by RenderSystem), so we have to do it
-        // ourselves here on the unit FP2 cares about. Save/restore active TU so we don't disturb
-        // vanilla state for subsequent render stages.
+        // Bind Minecraft's block atlas to TU0 (terrainTextureUnit) and lightmap to TU1
+        // (lightmapTextureUnit) before render(). Without these, block.frag's `sampleTerrain()`
+        // and `texture(LIGHTMAP_SAMPLER, ...)` read garbage / zeros and the fragment color
+        // collapses to black. Vanilla rebinds these to its own texture units between render
+        // stages, so we have to set them on FP2's expected units here. Save/restore the prior
+        // GL bindings so we don't perturb subsequent vanilla render stages.
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        int atlasId = mc.getModelManager().getAtlas(net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS).getId();
         int lightmapId = LightmapAccess1_21.textureId(mc.gameRenderer.lightTexture());
         int prevActiveTU = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
-        int prevTU1Binding;
+        GL13.glActiveTexture(GL13.GL_TEXTURE0);
+        int prevTU0Binding = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, atlasId);
         GL13.glActiveTexture(GL13.GL_TEXTURE1);
-        prevTU1Binding = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        int prevTU1Binding = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, lightmapId);
         try {
             renderer.render(this.fp2_cameraState, drawState);
         } finally {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTU1Binding);
+            GL13.glActiveTexture(GL13.GL_TEXTURE0);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTU0Binding);
             GL13.glActiveTexture(prevActiveTU);
         }
     }

@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "net.daporkchop.fp2.mc.asm",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8.5",
+  "client": [
+    "client.renderer.MixinGameRenderer1_21"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
