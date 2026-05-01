@@ -22,5 +22,12 @@ license="MIT"
     ordering="NONE"
     side="BOTH"
 
+[[dependencies.fp2]]
+    modId="terrain_diffusion_mc"
+    type="required"
+    versionRange="[2.1.0,)"
+    ordering="NONE"
+    side="BOTH"
+
 [[mixins]]
     config="fp2.mixins.json"

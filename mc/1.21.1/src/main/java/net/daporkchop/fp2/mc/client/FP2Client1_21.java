@@ -19,10 +19,12 @@ import net.minecraft.resources.ResourceLocation;
 import org.apache.logging.log4j.LogManager;
 
 //? if neoforge {
+import com.mojang.blaze3d.platform.InputConstants;
 import net.daporkchop.fp2.core.client.render.state.CameraState;
 import net.daporkchop.fp2.core.client.render.state.DrawState;
 import net.daporkchop.fp2.core.engine.api.ctx.IFarClientContext;
 import net.daporkchop.fp2.core.engine.client.AbstractFarRenderer;
+import net.daporkchop.fp2.mc.client.gui.FP2QuickSettingsScreen;
 import net.daporkchop.fp2.mc.client.player.FarPlayerClient1_21;
 import net.daporkchop.fp2.mc.client.render.Frustum1_21;
 import net.daporkchop.fp2.mc.client.render.LevelRenderer1_21;
@@ -30,14 +32,23 @@ import net.daporkchop.fp2.mc.client.render.LightmapAccess1_21;
 import net.daporkchop.fp2.mc.client.render.TerrainRenderingBlockedTracker1_21;
 import net.daporkchop.fp2.mc.client.world.FWorldClient1_21;
 import net.daporkchop.fp2.mc.compat.vanilla.FP2VanillaClient1_21;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.PauseScreen;
+import net.minecraft.client.gui.screens.options.OptionsScreen;
+import net.minecraft.client.gui.screens.options.VideoSettingsScreen;
 import net.minecraft.world.phys.Vec3;
+import net.neoforged.bus.api.IEventBus;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
+import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.client.event.ViewportEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 import net.minecraft.world.level.material.FogType;
+import org.lwjgl.glfw.GLFW;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL13;
 //?}
@@ -58,6 +69,15 @@ public class FP2Client1_21 extends FP2Client {
     private final CameraState fp2_cameraState = new CameraState();
     private final float[] fp2_modelView = new float[16];
     private final float[] fp2_projection = new float[16];
+
+    // Hotkey for the in-game quick-settings screen. Static so RegisterKeyMappingsEvent can reach
+    // it from a static modbus handler — KeyMapping registration runs during mod setup, before any
+    // FP2Client1_21 instance exists.
+    private static final KeyMapping OPEN_QUICK_SETTINGS = new KeyMapping(
+            "key.fp2.quick_settings",
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_K,
+            "key.categories.fp2");
     //?}
 
     public FP2Client1_21(@NonNull FP2Core fp2) {
@@ -121,6 +141,47 @@ public class FP2Client1_21 extends FP2Client {
         if (world != null) {
             world.clientExecutor().tick();
         }
+
+        // Drain any queued presses of the quick-settings hotkey. Done from the player-tick hook
+        // because we already subscribe to it; consumeClick returns true once per press regardless
+        // of how many ticks pass between dispatch and check.
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.screen == null) {
+            while (OPEN_QUICK_SETTINGS.consumeClick()) {
+                mc.setScreen(new FP2QuickSettingsScreen(null));
+            }
+        }
+    }
+
+    /**
+     * Adds an "FP2 Settings" button to MC's video settings, options, and pause screens. The
+     * button is laid out as a small column in the upper-right; positions match what 1.12.2 used
+     * for the same purpose. Cancellation is checked so we don't pile up duplicates if the screen
+     * is reopened repeatedly.
+     */
+    @SubscribeEvent
+    public void onScreenInit(ScreenEvent.Init.Post event) {
+        var screen = event.getScreen();
+        if (screen instanceof VideoSettingsScreen
+                || screen instanceof OptionsScreen
+                || screen instanceof PauseScreen) {
+            int x = screen.width / 2 + 105;
+            int y = screen.height / 6 - 12;
+            event.addListener(Button.builder(
+                            net.minecraft.network.chat.Component.literal("FP2"),
+                            b -> Minecraft.getInstance().setScreen(new FP2QuickSettingsScreen(screen)))
+                    .bounds(x, y, 40, 20)
+                    .build());
+        }
+    }
+
+    /**
+     * Registers the quick-settings keymapping. Must run on the mod-event bus during setup, not on
+     * the game bus — vanilla wires keymaps through {@code Minecraft.options}, which only consumes
+     * RegisterKeyMappingsEvent results.
+     */
+    public static void registerKeyMappings(IEventBus modBus) {
+        modBus.addListener((RegisterKeyMappingsEvent event) -> event.register(OPEN_QUICK_SETTINGS));
     }
 
     // Per-frame render hook — drives AbstractFarRenderer.render() at the same point in the

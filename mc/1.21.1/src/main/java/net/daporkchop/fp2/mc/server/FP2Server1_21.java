@@ -2,8 +2,11 @@ package net.daporkchop.fp2.mc.server;
 
 import lombok.Getter;
 import lombok.NonNull;
+import net.daporkchop.fp2.api.event.FEventHandler;
+import net.daporkchop.fp2.api.event.generic.FChangedEvent;
 import net.daporkchop.fp2.api.util.Identifier;
 import net.daporkchop.fp2.core.FP2Core;
+import net.daporkchop.fp2.core.config.FP2Config;
 import net.daporkchop.fp2.core.network.packet.standard.server.SPacketHandshake;
 import net.daporkchop.fp2.core.server.FP2Server;
 import net.daporkchop.fp2.core.server.player.IFarPlayerServer;
@@ -66,6 +69,19 @@ public class FP2Server1_21 extends FP2Server {
         if (player != null) {
             player.fp2_IFarPlayerServer_handle(packet);
         }
+    }
+
+    /**
+     * Pushes the global config to every connected player whenever it changes. Without this, the
+     * server keeps each player's serverConfig at whatever was set on join, so the per-player
+     * {@code FP2Config.merge(server, client)} never picks up new client-side cutoff/maxLevels and
+     * the active rendering session never rebuilds. Mirrors what FP2Server1_12 does on the 1.12.2
+     * branch.
+     */
+    @FEventHandler
+    protected void onConfigChanged(FChangedEvent<FP2Config> event) {
+        FP2Config newConfig = event.next();
+        this.players.values().forEach(player -> player.fp2_IFarPlayer_serverConfig(newConfig));
     }
 
     //? if neoforge {

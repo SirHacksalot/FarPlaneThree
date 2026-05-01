@@ -31,6 +31,10 @@ repositories {
         url = "https://maven.daporkchop.net/"
     }
     mavenCentral()
+    // libs/ lives next to mc/1.21.1/build.gradle, but Stonecutter sets each variant's
+    // projectDir to versions/<name>, so project.file('libs') would resolve there. Use the
+    // parent (the mc/1.21.1 dir) so both fabric and neoforge variants share the same libs/.
+    flatDir { dirs rootProject.file('mc/1.21.1/libs') }
 }
 
 stonecutter.const 'neoforge', project.name == 'neoforge'
@@ -333,6 +337,13 @@ dependencies {
 
     if (project.name == 'neoforge') {
         neoForge "net.neoforged:neoforge:${neoforgeVersion}"
+
+        // Terrain Diffusion (TDM) — sourced from libs/ flatDir as a NeoForge mod jar.
+        // ONNX Runtime must be on the GAME-layer classpath via forgeRuntimeLibrary so TDM's
+        // pipeline classes can resolve ai.onnxruntime.* at runtime; plain implementation alone
+        // is not visible to NeoForge's ModuleClassLoader.
+        modImplementation files(rootProject.file('mc/1.21.1/libs/terrain-diffusion-mc-2.1.0-windows+1.21.1.jar'))
+        forgeRuntimeLibrary 'com.microsoft.onnxruntime:onnxruntime-dml:1.0'
     } else if (project.name == 'fabric') {
         modImplementation "net.fabricmc:fabric-loader:${fabricLoaderVersion}"
     }

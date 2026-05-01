@@ -1,6 +1,7 @@
 package net.daporkchop.fp2.mc.compat.vanilla;
 
 //? if neoforge {
+import com.github.xandergos.terraindiffusionmc.world.TerrainDiffusionBiomeSource;
 import net.daporkchop.fp2.api.event.FEventHandler;
 import net.daporkchop.fp2.api.util.math.IntAxisAlignedBB;
 import net.daporkchop.fp2.core.engine.api.server.IFarTileProvider;
@@ -12,9 +13,11 @@ import net.daporkchop.fp2.core.server.event.GetCoordinateLimitsEvent;
 import net.daporkchop.fp2.core.server.event.GetExactFBlockLevelEvent;
 import net.daporkchop.fp2.core.server.event.GetTerrainGeneratorEvent;
 import net.daporkchop.fp2.core.server.world.ExactFBlockLevelHolder;
+import net.daporkchop.fp2.mc.compat.terraindiffusion.TDMRoughGenerator;
 import net.daporkchop.fp2.mc.compat.vanilla.exactfblocklevel.VanillaExactFBlockLevelHolder1_21;
 import net.daporkchop.fp2.mc.server.world.level.FLevelServer1_21;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.chunk.ChunkGenerator;
 
 import java.util.Optional;
 
@@ -47,6 +50,11 @@ public class FP2Vanilla1_21 {
 
     @FEventHandler(name = "vanilla_generator_rough")
     public Optional<IFarGeneratorRough> createGeneratorRough(IFarGeneratorRough.CreationEvent event) {
+        ServerLevel level = (ServerLevel) event.world().implLevel();
+        ChunkGenerator chunkGenerator = level.getChunkSource().getGenerator();
+        if (chunkGenerator.getBiomeSource() instanceof TerrainDiffusionBiomeSource tdmSource) {
+            return Optional.of(new TDMRoughGenerator(event.world(), event.provider(), tdmSource, level.getSeed()));
+        }
         return Optional.empty();
     }
 

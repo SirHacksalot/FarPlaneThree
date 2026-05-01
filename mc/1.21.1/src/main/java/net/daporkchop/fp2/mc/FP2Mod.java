@@ -34,6 +34,9 @@ public class FP2Mod extends FP2Core {
         this.log(new Log4jAsPorkLibLogger(LogManager.getLogger(FP2.MODID)));
         modEventBus.addListener(this::onCommonSetup);
         modEventBus.addListener(this::onRegisterPayloadHandlers);
+        if (FMLEnvironment.dist == Dist.CLIENT) {
+            FP2Client1_21.registerKeyMappings(modEventBus);
+        }
     }
 
     private void onRegisterPayloadHandlers(RegisterPayloadHandlersEvent event) {
